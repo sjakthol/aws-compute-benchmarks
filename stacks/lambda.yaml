@@ -1,0 +1,39 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Compute Benchmarks - Lambda Edition
+
+Resources:
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-function
+      RetentionInDays: 7
+
+  Function:
+    DependsOn: LogGroup
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Lambda function for AWS compute benchmarks
+      FunctionName: !Sub '${AWS::StackName}-function'
+      Handler: index.handler
+      MemorySize: 1792 # 1 vCPU
+      Role: !GetAtt FunctionRole.Arn
+      Runtime: nodejs12.x
+      Timeout: 65
+      Code: ../benchmark/
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-function' }
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Path: /
+      RoleName: !Sub ${AWS::StackName}-function-role

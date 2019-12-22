@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Compute Benchmarks - Fargate Edition
+
+Resources:
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${AWS::StackName}-cluster
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-cluster' }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub ${AWS::StackName}
+      RetentionInDays: 7
+
+  TaskExecutionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Path: /
+      RoleName: !Sub ${AWS::StackName}-task-execution-role
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: benchmark
+          Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/benchmark
+          Cpu: 1024
+          Memory: 2048
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-region: !Ref AWS::Region
+              awslogs-group: !Ref LogGroup
+              awslogs-stream-prefix: benchmark
+      Cpu: '1024'
+      Memory: '2048'
+      Family: !Sub ${AWS::StackName}-task-definition
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - EC2
+        - FARGATE
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-task-definition' }
+      # TaskRoleArn: !GetAtt TaskRole.Arn
+
+  BenchmarkService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref Cluster
+      DeploymentConfiguration:
+        MaximumPercent: 100
+        MinimumHealthyPercent: 0
+      DesiredCount: 1
+      EnableECSManagedTags: true
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: 'ENABLED'
+          Subnets:
+            - Fn::ImportValue: infra-vpc-sn-public-a
+            - Fn::ImportValue: infra-vpc-sn-public-b
+      ServiceName: !Sub ${AWS::StackName}-benchmark-service
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-benchmark-service' }
+      TaskDefinition: !Ref TaskDefinition

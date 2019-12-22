@@ -1,0 +1,18 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Compute Benchmarks - Infra (common resources)
+
+Resources:
+  BenchmarkImage:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: benchmark
+      Tags:
+        - { Key: Name, Value: benchmark }
+
+  BenchmarkLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}
+      RetentionInDays: 7
+
+

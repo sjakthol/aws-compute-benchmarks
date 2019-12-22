@@ -1,0 +1,144 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Compute Benchmark - EC2 Edition
+
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id'
+
+Resources:
+  SecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: !Sub Security group for ${AWS::StackName}
+      GroupName: !Sub ${AWS::StackName}-sg
+      VpcId: !ImportValue infra-vpc-VpcId
+      Tags:
+        - { Key: Name, Value: !Sub '${AWS::StackName}-sg' }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub ${AWS::StackName}
+      RetentionInDays: 7
+
+  Role:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Path: /
+      RoleName: !Sub ${AWS::StackName}-role
+      Policies:
+        - PolicyName: ECRAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/benchmark
+
+  RoleProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref Role
+      InstanceProfileName: !Sub '${AWS::StackName}-profile'
+
+  LaunchTemplate:
+    Type: "AWS::EC2::LaunchTemplate"
+    Properties:
+      LaunchTemplateName: !Sub ${AWS::StackName}-template
+      LaunchTemplateData:
+        IamInstanceProfile:
+          Arn: !GetAtt RoleProfile.Arn
+        ImageId: !Ref LatestAmiId
+        InstanceMarketOptions:
+          MarketType: spot
+          SpotOptions:
+            SpotInstanceType: one-time
+        InstanceType: r4.large
+        KeyName: sjakthol
+        SecurityGroupIds:
+          - !Ref SecurityGroup
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - { Key: Name, Value: !Sub '${AWS::StackName}' }
+          - ResourceType: volume
+            Tags:
+              - { Key: Name, Value: !Sub '${AWS::StackName}-volume' }
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #cloud-config
+              repo_update: true
+              repo_upgrade: all
+
+              write_files:
+                - path: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+                  content: |
+                    {
+                      "logs": {
+                        "logs_collected": {
+                          "files": {
+                            "collect_list": [{
+                              "file_path": "/run/benchmark-results.log",
+                              "log_group_name": "${LogGroup}",
+                              "log_stream_name": "{instance_id}-benchmark-results",
+                              "timezone": "UTC"
+                            }]
+                          }
+                        },
+                        "log_stream_name": "{instance_id}-default"
+                      }
+                    }
+
+              runcmd:
+                - |
+                  #!/bin/bash
+                  set -euo xtrace
+
+                  # SSM Agent
+                  yum install -y amazon-ssm-agent
+                  systemctl start amazon-ssm-agent
+
+                  # CloudWatch Agent
+                  curl -sSLfO https://s3.${AWS::Region}.amazonaws.com/amazoncloudwatch-agent-${AWS::Region}/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm
+                  rpm -U ./amazon-cloudwatch-agent.rpm
+                  amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+                  # Run benchmark
+                  yum install -y awscli
+                  aws --region ${AWS::Region} ecr get-login --no-include-email | bash
+
+                  docker run ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/benchmark >> /run/benchmark-results.log
+
+                  sleep 30
+                  poweroff
+
+  Instance:
+    Type: "AWS::EC2::Instance"
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LaunchTemplate:
+        LaunchTemplateId: !Ref LaunchTemplate
+        Version: !GetAtt LaunchTemplate.LatestVersionNumber
+      SubnetId: !ImportValue infra-vpc-sn-public-a
