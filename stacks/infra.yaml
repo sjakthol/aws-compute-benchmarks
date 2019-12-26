@@ -8,11 +8,3 @@ Resources:
       RepositoryName: benchmark
       Tags:
         - { Key: Name, Value: benchmark }
-
-  BenchmarkLambdaLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${AWS::StackName}
-      RetentionInDays: 7
-
-
